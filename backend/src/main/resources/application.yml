@@ -1,0 +1,114 @@
+spring:
+  application:
+    name: crm-platform
+
+  datasource:
+    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/${DB_NAME:crm}?useSSL=${DB_USE_SSL:false}&allowPublicKeyRetrieval=true&serverTimezone=UTC&rewriteBatchedStatements=true
+    username: ${DB_USERNAME:crm_app}
+    password: ${DB_PASSWORD:crm_app_password}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      # Sized for containers with 2 vCPU: connections ~= (2 * cores) + effective spindles.
+      # A larger pool does not make MySQL faster - it just queues inside the database instead
+      # of inside the app, where the queue is at least observable.
+      maximum-pool-size: ${DB_POOL_MAX:10}
+      minimum-idle: ${DB_POOL_MIN:2}
+      connection-timeout: 10000
+      idle-timeout: 300000
+      max-lifetime: 1200000
+      pool-name: crm-hikari
+      auto-commit: false
+
+  jpa:
+    open-in-view: false            # no lazy loading from the view layer; associations are
+                                   # resolved with an entity graph inside the transaction
+    hibernate:
+      ddl-auto: validate           # Flyway owns the schema; Hibernate only checks it
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQLDialect
+        jdbc:
+          batch_size: 50
+          time_zone: UTC
+        order_inserts: true
+        order_updates: true
+        default_batch_fetch_size: 25   # collapses lazy N+1 into IN (...) batches
+        query:
+          in_clause_parameter_padding: true
+          fail_on_pagination_over_collection_fetch: true
+    show-sql: false
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+    validate-on-migrate: true
+
+  data:
+    web:
+      pageable:
+        default-page-size: 20
+        max-page-size: 100        # hard cap: a client cannot ask for the whole table
+        one-indexed-parameters: false
+
+  jackson:
+    default-property-inclusion: non_null
+    serialization:
+      write-dates-as-timestamps: false
+      indent-output: false
+
+  threads:
+    virtual:
+      enabled: true               # Java 21 virtual threads: request handling is IO bound
+
+server:
+  port: ${SERVER_PORT:8080}
+  shutdown: graceful
+  compression:
+    enabled: true
+    mime-types: application/json,application/problem+json
+    min-response-size: 1024
+  error:
+    include-message: never        # errors are rendered by GlobalExceptionHandler
+    include-stacktrace: never
+  forward-headers-strategy: framework   # trust X-Forwarded-* from the ALB
+
+crm:
+  security:
+    jwt:
+      secret: ${JWT_SECRET:local-development-only-secret-please-override-with-32-plus-chars}
+      issuer: ${JWT_ISSUER:slate-crm}
+      access-token-ttl: ${JWT_ACCESS_TTL:15m}
+      refresh-token-ttl: ${JWT_REFRESH_TTL:7d}
+    cors:
+      allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:5173}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: when-authorized
+  health:
+    db:
+      enabled: true
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: method
+    tags-sorter: alpha
+
+logging:
+  level:
+    root: INFO
+    io.crmplatform: ${LOG_LEVEL_APP:INFO}
+    org.hibernate.SQL: ${LOG_LEVEL_SQL:WARN}
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n"
