@@ -1,0 +1,35 @@
+# Integration-test profile. The JDBC URL is supplied at runtime by Testcontainers through
+# @DynamicPropertySource, so only behaviour differences live here.
+spring:
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate       # the same validation the production boot performs
+    properties:
+      hibernate:
+        default_batch_fetch_size: 25
+
+  flyway:
+    enabled: true              # tests run against the real migrations, not a generated schema
+    clean-disabled: false
+
+  datasource:
+    hikari:
+      maximum-pool-size: 5
+      auto-commit: false
+
+crm:
+  security:
+    jwt:
+      secret: test-only-signing-secret-that-is-long-enough-for-hs256
+      issuer: slate-crm-test
+      access-token-ttl: 15m
+      refresh-token-ttl: 7d
+    cors:
+      allowed-origins: http://localhost:5173
+
+logging:
+  level:
+    root: WARN
+    io.crmplatform: INFO
+    org.testcontainers: INFO
