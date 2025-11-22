@@ -1,0 +1,37 @@
+# Copy to terraform.tfvars (git-ignored) and adjust before applying.
+
+project_name = "slate-crm"
+environment  = "staging"
+aws_region   = "us-east-1"
+owner        = "crm-platform-team"
+
+# --- network ---------------------------------------------------------------
+vpc_cidr                = "10.40.0.0/16"
+availability_zone_count = 2
+# One NAT gateway saves roughly $32/month per AZ. Set to false for prod.
+single_nat_gateway = true
+
+# --- TLS -------------------------------------------------------------------
+# Leave empty for an HTTP-only demo; set it and port 80 becomes a 301 redirect.
+certificate_arn = ""
+
+# --- services --------------------------------------------------------------
+api_image_tag     = "latest"
+web_image_tag     = "latest"
+api_desired_count = 2
+api_min_capacity  = 2
+api_max_capacity  = 8
+api_cpu           = 1024
+api_memory        = 2048
+
+# --- database --------------------------------------------------------------
+db_instance_class        = "db.t4g.medium"
+db_allocated_storage     = 50
+db_multi_az              = true
+db_backup_retention_days = 7
+db_deletion_protection   = false
+
+# --- application -----------------------------------------------------------
+cors_allowed_origins = "https://crm.example.com"
+log_level_app        = "INFO"
+log_retention_days   = 30
