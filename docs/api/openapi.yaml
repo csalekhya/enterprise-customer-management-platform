@@ -1,0 +1,968 @@
+openapi: 3.0.3
+
+info:
+  title: Enterprise Customer Management Platform API
+  version: 1.0.0
+  description: |
+    B2B CRM backend: accounts, contacts, interactions, opportunities and pipeline analytics.
+
+    Authentication is a bearer access token obtained from `POST /api/v1/auth/login`. Access
+    tokens are valid for 15 minutes; refresh tokens rotate on every use and are valid for 7
+    days. Every error is an RFC 7807 problem document.
+
+    This file is checked in as the published contract. The running service also serves a
+    generated spec at `/v3/api-docs`, which is the authority if the two ever disagree.
+  contact:
+    name: enterprise-customer-management-platform contributors
+    url: https://github.com/csalekhya/enterprise-customer-management-platform
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:8080
+    description: Local
+  - url: https://api.slatecrm.io
+    description: Production
+
+tags:
+  - name: Authentication
+    description: Password grant, refresh rotation and session teardown
+  - name: Accounts
+    description: Companies - the aggregate root of the CRM
+  - name: Customers
+    description: Contacts inside an account
+  - name: Interactions
+    description: Append-only activity trail
+  - name: Opportunities
+    description: Sales pipeline
+  - name: Dashboard
+    description: Aggregate KPIs
+  - name: Users
+    description: User administration
+
+security:
+  - bearerAuth: []
+
+paths:
+  /api/v1/auth/login:
+    post:
+      tags: [Authentication]
+      summary: Exchange credentials for a token pair
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+            example:
+              email: admin@slatecrm.io
+              password: Admin@12345
+      responses:
+        '200':
+          description: Authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/auth/refresh:
+    post:
+      tags: [Authentication]
+      summary: Rotate a refresh token
+      description: The presented token is revoked server-side. Replaying a revoked token revokes the whole chain for that user.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken:
+                  type: string
+      responses:
+        '200':
+          description: A new token pair
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/auth/logout:
+    post:
+      tags: [Authentication]
+      summary: Revoke a refresh token
+      description: Idempotent. An unknown or already-revoked token still returns 204.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken:
+                  type: string
+      responses:
+        '204':
+          description: Session ended
+
+  /api/v1/auth/me:
+    get:
+      tags: [Authentication]
+      summary: The authenticated user, their roles and last login
+      responses:
+        '200':
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthenticatedUser'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/accounts:
+    get:
+      tags: [Accounts]
+      summary: Paged, sorted and filtered account list
+      description: 'Roles: ADMIN, SALES_MANAGER, SALES_REP, READ_ONLY'
+      parameters:
+        - { name: search, in: query, schema: { type: string }, description: Case-insensitive fragment of name or website }
+        - { name: tier, in: query, schema: { $ref: '#/components/schemas/AccountTier' } }
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/AccountStatus' } }
+        - { name: industry, in: query, schema: { $ref: '#/components/schemas/Industry' } }
+        - { name: ownerUserId, in: query, schema: { type: integer, format: int64 } }
+        - { name: minRevenue, in: query, schema: { type: number } }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+        - $ref: '#/components/parameters/Sort'
+      responses:
+        '200':
+          description: One page of accounts
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PageEnvelope'
+                  - type: object
+                    properties:
+                      content:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Account'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [Accounts]
+      summary: Create an account
+      description: 'Roles: ADMIN, SALES_MANAGER, SALES_REP'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AccountUpsertRequest'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/v1/accounts/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      tags: [Accounts]
+      summary: One account with its contact and pipeline counts
+      responses:
+        '200':
+          description: The account
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [Accounts]
+      summary: Replace an account
+      description: 'Roles: ADMIN, SALES_MANAGER, SALES_REP (own records only)'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AccountUpsertRequest'
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Accounts]
+      summary: Delete an account
+      description: 'Roles: ADMIN, SALES_MANAGER. Refused while contacts or opportunities remain.'
+      responses:
+        '204':
+          description: Deleted
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/accounts/{id}/owner:
+    put:
+      tags: [Accounts]
+      summary: Transfer ownership
+      description: 'Roles: ADMIN, SALES_MANAGER'
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - { name: ownerUserId, in: query, required: true, schema: { type: integer, format: int64 } }
+      responses:
+        '200':
+          description: Reassigned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/customers:
+    get:
+      tags: [Customers]
+      summary: Paged, sorted and filtered contact list
+      description: 'Roles: ADMIN, SALES_MANAGER, SALES_REP, READ_ONLY'
+      parameters:
+        - { name: search, in: query, schema: { type: string }, description: Fragment of first name, last name or email }
+        - { name: stage, in: query, schema: { $ref: '#/components/schemas/LifecycleStage' } }
+        - { name: accountId, in: query, schema: { type: integer, format: int64 } }
+        - { name: ownerUserId, in: query, schema: { type: integer, format: int64 } }
+        - { name: tag, in: query, schema: { type: string } }
+        - { name: tier, in: query, schema: { $ref: '#/components/schemas/AccountTier' } }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+        - $ref: '#/components/parameters/Sort'
+      responses:
+        '200':
+          description: One page of contacts
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PageEnvelope'
+                  - type: object
+                    properties:
+                      content:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Customer'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [Customers]
+      summary: Create a contact
+      description: 'Roles: ADMIN, SALES_MANAGER, SALES_REP. A rep becomes the owner unless a manager assigns another.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CustomerUpsertRequest'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Customer'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/v1/customers/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      tags: [Customers]
+      summary: One contact
+      responses:
+        '200':
+          description: The contact
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Customer'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [Customers]
+      summary: Replace a contact
+      description: 'Roles: ADMIN, SALES_MANAGER, SALES_REP (own records only)'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CustomerUpsertRequest'
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Customer'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    patch:
+      tags: [Customers]
+      summary: Partial update for inline edits
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                lifecycleStage:
+                  $ref: '#/components/schemas/LifecycleStage'
+                tags:
+                  type: string
+                  maxLength: 255
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Customer'
+    delete:
+      tags: [Customers]
+      summary: Delete a contact and its activity trail
+      responses:
+        '204':
+          description: Deleted
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/interactions:
+    get:
+      tags: [Interactions]
+      summary: Newest-first timeline, optionally scoped to a contact or an account
+      parameters:
+        - { name: customerId, in: query, schema: { type: integer, format: int64 } }
+        - { name: accountId, in: query, schema: { type: integer, format: int64 } }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+      responses:
+        '200':
+          description: One page of activity
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PageEnvelope'
+                  - type: object
+                    properties:
+                      content:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Interaction'
+    post:
+      tags: [Interactions]
+      summary: Log an activity against a contact
+      description: 'Roles: ADMIN, SALES_MANAGER, SALES_REP. The caller is recorded as the author.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InteractionCreateRequest'
+      responses:
+        '201':
+          description: Logged
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Interaction'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+
+  /api/v1/opportunities:
+    get:
+      tags: [Opportunities]
+      summary: Paged deal list
+      parameters:
+        - { name: stage, in: query, schema: { $ref: '#/components/schemas/OpportunityStage' } }
+        - { name: accountId, in: query, schema: { type: integer, format: int64 } }
+        - { name: ownerUserId, in: query, schema: { type: integer, format: int64 } }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+        - $ref: '#/components/parameters/Sort'
+      responses:
+        '200':
+          description: One page of deals
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PageEnvelope'
+                  - type: object
+                    properties:
+                      content:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Opportunity'
+    post:
+      tags: [Opportunities]
+      summary: Create a deal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpportunityUpsertRequest'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Opportunity'
+
+  /api/v1/opportunities/board:
+    get:
+      tags: [Opportunities]
+      summary: Deals grouped by stage, ready to render as kanban columns
+      responses:
+        '200':
+          description: Board
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/Opportunity'
+
+  /api/v1/opportunities/{id}/stage:
+    patch:
+      tags: [Opportunities]
+      summary: Move a deal to another stage
+      description: WON pins probability to 100 and LOST to 0, so weighted forecasts stay coherent.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [stage]
+              properties:
+                stage:
+                  $ref: '#/components/schemas/OpportunityStage'
+                probability:
+                  type: integer
+                  minimum: 0
+                  maximum: 100
+      responses:
+        '200':
+          description: Moved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Opportunity'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/dashboard/summary:
+    get:
+      tags: [Dashboard]
+      summary: Accounts, pipeline by stage, funnel, activity mix and top accounts
+      description: Served from a 60 second server-side cache over aggregate queries.
+      responses:
+        '200':
+          description: KPI bundle
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardSummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/users:
+    get:
+      tags: [Users]
+      summary: Paged user directory
+      description: 'Roles: ADMIN'
+      parameters:
+        - { name: search, in: query, schema: { type: string } }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+        - $ref: '#/components/parameters/Sort'
+      responses:
+        '200':
+          description: One page of users
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PageEnvelope'
+                  - type: object
+                    properties:
+                      content:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/User'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [Users]
+      summary: Create a user and assign roles
+      description: 'Roles: ADMIN'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password, firstName, lastName, roles]
+              properties:
+                email: { type: string, format: email, maxLength: 180 }
+                password: { type: string, minLength: 10, maxLength: 128 }
+                firstName: { type: string, maxLength: 80 }
+                lastName: { type: string, maxLength: 80 }
+                roles:
+                  type: array
+                  minItems: 1
+                  items:
+                    $ref: '#/components/schemas/RoleName'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/v1/users/options:
+    get:
+      tags: [Users]
+      summary: Enabled users as owner-picker options
+      description: Cached reference data, readable by every role.
+      responses:
+        '200':
+          description: Options
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: { type: integer, format: int64 }
+                    name: { type: string }
+                    email: { type: string, format: email }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Access token from POST /api/v1/auth/login, valid for 15 minutes
+
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    Page:
+      name: page
+      in: query
+      description: Zero-based page index
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+    Size:
+      name: size
+      in: query
+      description: Page size. Values above 100 are clamped to 100.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    Sort:
+      name: sort
+      in: query
+      description: '`property,direction` - for example `lastName,asc`. Repeatable.'
+      schema:
+        type: string
+
+  responses:
+    Unauthorized:
+      description: Missing, expired or invalid credentials
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+          example:
+            type: https://docs.slatecrm.io/problems/invalid-credentials
+            title: Authentication failed
+            status: 401
+            detail: Invalid credentials.
+            instance: /api/v1/auth/login
+    Forbidden:
+      description: Authenticated but not permitted, by role or by record ownership
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+          example:
+            type: https://docs.slatecrm.io/problems/ownership-required
+            title: Forbidden
+            status: 403
+            detail: You can only modify contacts that you own
+            instance: /api/v1/customers/12
+    NotFound:
+      description: No such record
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+    Conflict:
+      description: A uniqueness or integrity rule would be violated
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+    ValidationError:
+      description: One or more fields are invalid
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+          example:
+            type: https://docs.slatecrm.io/problems/validation-error
+            title: Validation failed
+            status: 400
+            detail: One or more fields are invalid. See the errors member for details.
+            instance: /api/v1/customers
+            errors:
+              email: must be a well-formed email address
+              firstName: must not be blank
+
+  schemas:
+    RoleName:
+      type: string
+      enum: [ADMIN, SALES_MANAGER, SALES_REP, READ_ONLY]
+
+    AccountTier:
+      type: string
+      enum: [BRONZE, SILVER, GOLD, PLATINUM]
+
+    AccountStatus:
+      type: string
+      enum: [ACTIVE, PROSPECT, CHURNED]
+
+    Industry:
+      type: string
+      enum:
+        [
+          TECHNOLOGY,
+          FINANCIAL_SERVICES,
+          HEALTHCARE,
+          MANUFACTURING,
+          RETAIL,
+          LOGISTICS,
+          ENERGY,
+          PUBLIC_SECTOR,
+          EDUCATION,
+          OTHER,
+        ]
+
+    LifecycleStage:
+      type: string
+      enum: [LEAD, QUALIFIED, CUSTOMER, CHAMPION]
+
+    InteractionType:
+      type: string
+      enum: [CALL, EMAIL, MEETING, NOTE]
+
+    OpportunityStage:
+      type: string
+      enum: [DISCOVERY, PROPOSAL, NEGOTIATION, WON, LOST]
+
+    ProblemDetail:
+      type: object
+      description: RFC 7807 problem document
+      properties:
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        instance: { type: string }
+        timestamp: { type: string, format: date-time }
+        errors:
+          type: object
+          additionalProperties: { type: string }
+
+    PageEnvelope:
+      type: object
+      properties:
+        page: { type: integer, description: Zero-based index of this page }
+        size: { type: integer }
+        totalElements: { type: integer, format: int64 }
+        totalPages: { type: integer }
+        first: { type: boolean }
+        last: { type: boolean }
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email, maxLength: 180 }
+        password: { type: string, minLength: 8, maxLength: 128 }
+
+    TokenResponse:
+      type: object
+      properties:
+        accessToken: { type: string }
+        refreshToken: { type: string }
+        tokenType: { type: string, example: Bearer }
+        expiresIn: { type: integer, description: Access token lifetime in seconds, example: 900 }
+        user:
+          $ref: '#/components/schemas/AuthenticatedUser'
+
+    AuthenticatedUser:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        email: { type: string, format: email }
+        firstName: { type: string }
+        lastName: { type: string }
+        roles:
+          type: array
+          items:
+            $ref: '#/components/schemas/RoleName'
+        lastLoginAt: { type: string, format: date-time, nullable: true }
+
+    Account:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        name: { type: string }
+        industry: { $ref: '#/components/schemas/Industry' }
+        tier: { $ref: '#/components/schemas/AccountTier' }
+        annualRevenue: { type: number, nullable: true }
+        website: { type: string, nullable: true }
+        status: { $ref: '#/components/schemas/AccountStatus' }
+        ownerUserId: { type: integer, format: int64 }
+        ownerName: { type: string }
+        contactCount: { type: integer, format: int64 }
+        openOpportunityCount: { type: integer, format: int64 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    AccountUpsertRequest:
+      type: object
+      required: [name, industry, tier, status]
+      properties:
+        name: { type: string, maxLength: 160 }
+        industry: { $ref: '#/components/schemas/Industry' }
+        tier: { $ref: '#/components/schemas/AccountTier' }
+        annualRevenue: { type: number, minimum: 0 }
+        website: { type: string, maxLength: 255 }
+        status: { $ref: '#/components/schemas/AccountStatus' }
+        ownerUserId:
+          type: integer
+          format: int64
+          nullable: true
+          description: Omit to own the record yourself. Assigning another user requires ADMIN or SALES_MANAGER.
+
+    Customer:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        accountId: { type: integer, format: int64 }
+        accountName: { type: string }
+        firstName: { type: string }
+        lastName: { type: string }
+        email: { type: string, format: email }
+        phone: { type: string, nullable: true }
+        jobTitle: { type: string, nullable: true }
+        lifecycleStage: { $ref: '#/components/schemas/LifecycleStage' }
+        ownerUserId: { type: integer, format: int64 }
+        ownerName: { type: string }
+        tags: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    CustomerUpsertRequest:
+      type: object
+      required: [accountId, firstName, lastName, email, lifecycleStage]
+      properties:
+        accountId: { type: integer, format: int64 }
+        firstName: { type: string, maxLength: 80 }
+        lastName: { type: string, maxLength: 80 }
+        email: { type: string, format: email, maxLength: 180 }
+        phone: { type: string, maxLength: 32 }
+        jobTitle: { type: string, maxLength: 120 }
+        lifecycleStage: { $ref: '#/components/schemas/LifecycleStage' }
+        ownerUserId: { type: integer, format: int64, nullable: true }
+        tags: { type: string, maxLength: 255 }
+
+    Interaction:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        customerId: { type: integer, format: int64 }
+        customerName: { type: string }
+        accountId: { type: integer, format: int64 }
+        accountName: { type: string }
+        type: { $ref: '#/components/schemas/InteractionType' }
+        subject: { type: string }
+        body: { type: string, nullable: true }
+        occurredAt: { type: string, format: date-time }
+        authorId: { type: integer, format: int64 }
+        authorName: { type: string }
+        createdAt: { type: string, format: date-time }
+
+    InteractionCreateRequest:
+      type: object
+      required: [customerId, type, subject, occurredAt]
+      properties:
+        customerId: { type: integer, format: int64 }
+        type: { $ref: '#/components/schemas/InteractionType' }
+        subject: { type: string, maxLength: 180 }
+        body: { type: string, maxLength: 4000 }
+        occurredAt:
+          type: string
+          format: date-time
+          description: Must not be in the future
+
+    Opportunity:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        accountId: { type: integer, format: int64 }
+        accountName: { type: string }
+        name: { type: string }
+        amount: { type: number }
+        weightedAmount: { type: number, description: amount x probability / 100 }
+        stage: { $ref: '#/components/schemas/OpportunityStage' }
+        probability: { type: integer, minimum: 0, maximum: 100 }
+        expectedCloseDate: { type: string, format: date, nullable: true }
+        ownerUserId: { type: integer, format: int64 }
+        ownerName: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    OpportunityUpsertRequest:
+      type: object
+      required: [accountId, name, amount, stage, probability]
+      properties:
+        accountId: { type: integer, format: int64 }
+        name: { type: string, maxLength: 160 }
+        amount: { type: number, exclusiveMinimum: true, minimum: 0 }
+        stage: { $ref: '#/components/schemas/OpportunityStage' }
+        probability: { type: integer, minimum: 0, maximum: 100 }
+        expectedCloseDate: { type: string, format: date, nullable: true }
+        ownerUserId: { type: integer, format: int64, nullable: true }
+
+    User:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        email: { type: string, format: email }
+        firstName: { type: string }
+        lastName: { type: string }
+        enabled: { type: boolean }
+        roles:
+          type: array
+          items:
+            $ref: '#/components/schemas/RoleName'
+        lastLoginAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+
+    DashboardSummary:
+      type: object
+      properties:
+        totalAccounts: { type: integer, format: int64 }
+        activeAccounts: { type: integer, format: int64 }
+        prospectAccounts: { type: integer, format: int64 }
+        totalContacts: { type: integer, format: int64 }
+        newContactsThisMonth: { type: integer, format: int64 }
+        interactionsLast30Days: { type: integer, format: int64 }
+        openPipelineValue: { type: number }
+        weightedPipelineValue: { type: number }
+        wonValueAllTime: { type: number }
+        pipelineByStage:
+          type: array
+          items:
+            type: object
+            properties:
+              stage: { $ref: '#/components/schemas/OpportunityStage' }
+              amount: { type: number }
+              weightedAmount: { type: number }
+              dealCount: { type: integer, format: int64 }
+        contactFunnel:
+          type: array
+          items:
+            type: object
+            properties:
+              stage: { $ref: '#/components/schemas/LifecycleStage' }
+              contactCount: { type: integer, format: int64 }
+        activityMix:
+          type: array
+          items:
+            type: object
+            properties:
+              type: { $ref: '#/components/schemas/InteractionType' }
+              total: { type: integer, format: int64 }
+        topAccountsByRevenue:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: integer, format: int64 }
+              name: { type: string }
+              tier: { $ref: '#/components/schemas/AccountTier' }
+              annualRevenue: { type: number }
+        generatedAt: { type: string, format: date-time }
